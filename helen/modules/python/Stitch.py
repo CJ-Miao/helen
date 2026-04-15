@@ -225,19 +225,25 @@ class Stitch:
                 rle_predictions = np.array(rles, dtype=np.int)
 
                 # now iterate over each position and add the predictions to the dictionary
+                # T INSERTION BUG FIX: Use (pos, split_indx) as key to avoid duplicate counting
+                # When both index=0 and index=1 exist for same (pos, split_indx), prefer index=0
+                # index=1 is redundant encoding that can cause T insertion in homopolymer regions
                 for position, base_pred, rle_pred in zip(positions, base_predictions, rle_predictions):
                     indx = position[1]
                     pos = position[0]
                     split_indx = position[2]
                     if indx < 0 or pos < 0:
                         continue
-                    if (pos, indx, split_indx) not in base_prediction_dict:
-                        base_prediction_dict[(pos, indx, split_indx)] = base_pred
-                        rle_prediction_dict[(pos, indx, split_indx)] = rle_pred
-                        all_positions.add((pos, indx, split_indx))
+                    # Use (pos, split_indx) as key - index=0 takes priority (processed first in sorted order)
+                    key = (pos, split_indx)
+                    if key not in base_prediction_dict:
+                        base_prediction_dict[key] = base_pred
+                        rle_prediction_dict[key] = rle_pred
+                        all_positions.add(key)
 
-            # now simply create a position list and query the  dictionary to generate the predicted sequence
-            pos_list = sorted(list(all_positions), key=lambda element: (element[0], element[1], element[2]))
+            # now simply create a position list and query the dictionary to generate the predicted sequence
+            # Sort by (pos, split_indx) since we no longer use indx in the key
+            pos_list = sorted(list(all_positions), key=lambda element: (element[0], element[1]))
             dict_fetch = operator.itemgetter(*pos_list)
             predicted_base_labels = list(dict_fetch(base_prediction_dict))
             predicted_rle_labels = list(dict_fetch(rle_prediction_dict))
