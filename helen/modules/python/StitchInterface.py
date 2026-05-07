@@ -37,17 +37,41 @@ def get_file_paths_from_directory(directory_path):
     return file_paths
 
 
-def perform_stitch(input_directory, output_path, output_prefix, threads):
+def perform_stitch(input_directory, output_path, output_prefix, threads, assembly_fasta=None):
     """
     This method gathers all contigs and calls the stitch module for each contig.
     :param input_directory: Path to the directory containing input files.
     :param output_path: Path to the output_consensus_sequence
     :param output_prefix: Output file's prefix
     :param threads: Number of threads to use
+    :param assembly_fasta: Optional path to assembly FASTA for empty pileup fallback
     :return:
     """
     # get all the files
     all_prediction_files = get_file_paths_from_directory(input_directory)
+
+    # Load assembly sequences if provided (for empty pileup fallback)
+    assembly_dict = None
+    if assembly_fasta is not None:
+        sys.stderr.write(TextColor.GREEN + "INFO: Loading assembly FASTA: " + assembly_fasta + "\n" + TextColor.END)
+        assembly_dict = {}
+        import gzip
+        open_func = gzip.open if assembly_fasta.endswith('.gz') else open
+        with open_func(assembly_fasta, 'rt') as f:
+            current_contig = None
+            current_seq = []
+            for line in f:
+                line = line.strip()
+                if line.startswith('>'):
+                    if current_contig:
+                        assembly_dict[current_contig] = ''.join(current_seq)
+                    current_contig = line[1:].split()[0]
+                    current_seq = []
+                else:
+                    current_seq.append(line.upper())
+            if current_contig:
+                assembly_dict[current_contig] = ''.join(current_seq)
+        sys.stderr.write(TextColor.GREEN + "INFO: Loaded " + str(len(assembly_dict)) + " assembly contigs\n" + TextColor.END)
 
     # we gather all the contigs
     all_contigs = set()
@@ -96,7 +120,7 @@ def perform_stitch(input_directory, output_path, output_prefix, threads):
 
         # call stitch to generate a sequence for this contig
         stich_object = Stitch()
-        consensus_sequence = stich_object.create_consensus_sequence(contig, chunk_name_tuple, threads)
+        consensus_sequence = stich_object.create_consensus_sequence(contig, chunk_name_tuple, threads, assembly_dict)
         sys.stderr.write(TextColor.BLUE + "INFO: " + str(log_prefix) + " FINISHED PROCESSING " + contig
                          + ", POLISHED SEQUENCE LENGTH: " + str(len(consensus_sequence)) + ".\n" + TextColor.END)
 

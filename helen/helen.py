@@ -94,6 +94,14 @@ def add_polish_arguments(parser):
         default=8,
         help="Total number of callers to spawn if doing CPU inference in distributed mode."
     )
+    parser.add_argument(
+        "-a",
+        "--assembly",
+        type=str,
+        required=False,
+        default=None,
+        help="Path to assembly FASTA (optional). Used as fallback for regions with empty pileup."
+    )
     return parser
 
 
@@ -220,6 +228,14 @@ def add_stitch_arguments(parser):
         default="HELEN_consensus",
         help="Prefix for the output file. Default is: HELEN_consensus"
     )
+    parser.add_argument(
+        "-a",
+        "--assembly",
+        type=str,
+        required=False,
+        default=None,
+        help="Path to assembly FASTA (optional). Used as fallback for regions with empty pileup."
+    )
 
 
 def add_download_models_arguments(parser):
@@ -310,7 +326,8 @@ def main():
                       FLAGS.output_prefix,
                       FLAGS.gpu_mode,
                       FLAGS.device_ids,
-                      FLAGS.callers)
+                      FLAGS.callers,
+                      FLAGS.assembly)
 
     elif FLAGS.sub_command == 'call_consensus':
         sys.stderr.write(TextColor.GREEN + "INFO: CALL CONSENSUS MODULE SELECTED\n" + TextColor.END)
@@ -330,7 +347,8 @@ def main():
         perform_stitch(FLAGS.input_dir,
                        FLAGS.output_dir,
                        FLAGS.output_prefix,
-                       FLAGS.threads)
+                       FLAGS.threads,
+                       FLAGS.assembly)
 
     elif FLAGS.sub_command == 'download_models':
         sys.stderr.write(TextColor.GREEN + "INFO: DOWNLOAD MODELS SELECTED\n" + TextColor.END)

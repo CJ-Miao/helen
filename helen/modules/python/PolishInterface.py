@@ -47,7 +47,7 @@ def get_elapsed_time_string(start_time, end_time):
 
 
 def polish_genome(image_dir, model_path, batch_size, num_workers, threads, output_dir, output_prefix, gpu_mode,
-                  device_ids, callers):
+                  device_ids, callers, assembly_fasta=None):
     """
     This method provides an interface too call the predict method that generates the prediction hdf5 file.
     :param image_dir: Path to directory where all MarginPolish images are saved.
@@ -60,6 +60,7 @@ def polish_genome(image_dir, model_path, batch_size, num_workers, threads, outpu
     :param gpu_mode: If true, predict method will use GPU.
     :param device_ids: List of GPU devices.
     :param callers: Total number of callers to use.
+    :param assembly_fasta: Optional path to assembly FASTA for empty pileup fallback.
     :return:
     """
     output_dir = FileManager.handle_output_directory(output_dir)
@@ -92,7 +93,8 @@ def polish_genome(image_dir, model_path, batch_size, num_workers, threads, outpu
     perform_stitch(prediction_output_directory,
                    output_dir,
                    output_prefix,
-                   threads)
+                   threads,
+                   assembly_fasta)
     stitch_end_time = time.time()
 
     call_consensus_time = get_elapsed_time_string(call_consensus_start_time, call_consensus_end_time)

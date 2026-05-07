@@ -189,13 +189,14 @@ class Stitch:
 
         return contig, running_start, running_end, running_sequence
 
-    def small_chunk_stitch(self, contig, small_chunk_keys):
+    def small_chunk_stitch(self, contig, small_chunk_keys, assembly_seq=None):
         """
         This process stitches regional image chunk predictions. Among these image chunks, the positions are
         always consistent, we don't need an alignment to stitch these chunks.
-        :param contig: Contig name
-        :param small_chunk_keys: Chunk keys in list as (contig_name, start_position, end_position)
-        :return:
+
+        FIX: When pileup is empty, the model predicts T×RLE=10 for all positions, creating
+        long homopolymer stretches that don't exist in reality. If assembly_seq is available,
+        fall back to the original assembly sequence for such regions.
         """
         # for chunk_key in small_chunk_keys:
         name_sequence_tuples = list()
@@ -249,6 +250,26 @@ class Stitch:
             predicted_rle_labels = list(dict_fetch(rle_prediction_dict))
             sequence = ''.join([StitchOptions.label_decoder[base] * int(rle)
                                 for base, rle in zip(predicted_base_labels, predicted_rle_labels)])
+
+            # FIX: Detect empty pileup - model produces long single-base sequences when pileup is empty
+            # Fall back to original assembly sequence in such cases
+            if len(sequence) > 2000 and assembly_seq is not None:
+                base_counts = {}
+                for b in sequence:
+                    base_counts[b] = base_counts.get(b, 0) + 1
+                max_base_count = max(base_counts.values())
+                if max_base_count / len(sequence) > 0.8:
+                    max_base = max(base_counts, key=base_counts.get)
+                    sys.stderr.write(TextColor.YELLOW +
+                        "WARNING: Empty pileup in " + str(contig) +
+                        " [" + str(contig_start) + "-" + str(contig_end) +
+                        "]: " + str(len(sequence)) + "bp, " +
+                        str(int(max_base_count / len(sequence) * 100)) + "% " + max_base +
+                        ", falling back to assembly.\n" + TextColor.END)
+                    assembly_start = max(0, int(contig_start))
+                    assembly_end = min(len(assembly_seq), int(contig_end))
+                    sequence = assembly_seq[assembly_start:assembly_end]
+
             # now add the generated sequence for further stitching
             name_sequence_tuples.append((contig, contig_start, contig_end, sequence))
 
@@ -260,14 +281,17 @@ class Stitch:
 
         return contig, running_start, running_end, running_sequence
 
-    def create_consensus_sequence(self, contig, sequence_chunk_keys, threads):
+    def create_consensus_sequence(self, contig, sequence_chunk_keys, threads, assembly_dict=None):
         """
         This is the consensus sequence create method that creates a sequence for a given contig.
         :param contig: Contig name
         :param sequence_chunk_keys: All the chunk keys in the contig
         :param threads: Number of available threads
+        :param assembly_dict: Optional dict mapping contig names to assembly sequences for fallback
         :return: A consensus sequence for a contig
         """
+        assembly_seq = assembly_dict.get(contig) if assembly_dict else None
+
         # first we sort the sequence chunks
         sequence_chunk_key_list = list()
 
@@ -287,7 +311,7 @@ class Stitch:
                                                  int(len(sequence_chunk_key_list) / threads) + 1))
 
             # we do the stitching per chunk of keys
-            futures = [executor.submit(self.small_chunk_stitch, contig, file_chunk)
+            futures = [executor.submit(self.small_chunk_stitch, contig, file_chunk, assembly_seq)
                        for file_chunk in file_chunks]
 
             # as they complete we add them to a list
