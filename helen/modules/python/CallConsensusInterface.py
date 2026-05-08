@@ -128,7 +128,7 @@ def call_consensus(image_dir, model_path, batch_size, num_workers, threads, outp
         threads_per_caller = 0
     else:
         # calculate how many threads each caller can use
-        threads_per_caller = int(threads / callers)
+        threads_per_caller = max(1, int(threads / callers))
         device_ids = []
 
     # chunk the inputs
