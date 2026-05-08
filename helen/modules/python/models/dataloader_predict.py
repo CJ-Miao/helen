@@ -81,11 +81,15 @@ class SequenceDataset(Dataset):
             position = np.append(position, empty_positions, 0)
             position = position.astype(np.int)
 
+        # Detect if entire image is empty pileup (all positions are -1)
+        # When pileup is completely empty, model produces spurious T×RLE=10 predictions
+        is_empty_pileup = np.all(position[:, 0] == -1)
+
         # at this point the image size should be SEQ_LENGTH, if not then raise a ValueError.
         if image.shape[0] < ImageSizeOptions.SEQ_LENGTH or position.shape[0] < ImageSizeOptions.SEQ_LENGTH:
             raise ValueError("IMAGE SIZE ERROR: " + str(hdf5_filepath) + " " + str(image.shape))
 
-        return contig, contig_start, contig_end, chunk_id, image, position, hdf5_filepath
+        return contig, contig_start, contig_end, chunk_id, image, position, is_empty_pileup, hdf5_filepath
 
     def __len__(self):
         """

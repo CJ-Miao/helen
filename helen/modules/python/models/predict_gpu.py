@@ -91,10 +91,14 @@ def predict(test_file, output_filename, model_path, batch_size, num_workers, ran
         batch_iterator = 0
 
         # the dataloader loop, iterates in minibatches. tqdm is the progress logger.
-        for contig, contig_start, contig_end, chunk_id, images, position, filename in test_loader:
+        for contig, contig_start, contig_end, chunk_id, images, position, is_empty_pileup, filename in test_loader:
             start_time = time.time()
             # the images are usually in uint8, convert them to FloatTensor
             images = images.type(torch.FloatTensor)
+            # Skip batch if entirely empty pileup to avoid spurious T×RLE=10 predictions
+            batch_empty = all(x.item() if isinstance(x, torch.Tensor) else bool(x) for x in is_empty_pileup)
+            if batch_empty:
+                continue
             # initialize the first hidden input as all zeros
             hidden = torch.zeros(images.size(0), 2 * TrainOptions.GRU_LAYERS, TrainOptions.HIDDEN_SIZE)
 
@@ -174,6 +178,9 @@ def predict(test_file, output_filename, model_path, batch_size, num_workers, ran
 
             # go to each of the images and save the predictions to the file
             for i in range(images.size(0)):
+                # Skip prediction for empty pileup images to avoid spurious T×RLE=10 predictions
+                if is_empty_pileup[i].item() if isinstance(is_empty_pileup[i], torch.Tensor) else is_empty_pileup[i]:
+                    continue
                 prediction_data_file.write_prediction(contig[i], contig_start[i], contig_end[i], chunk_id[i],
                                                       position[i], predicted_base_labels[i], predicted_rle_labels[i],
                                                       filename[i])
