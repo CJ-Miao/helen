@@ -81,9 +81,13 @@ class SequenceDataset(Dataset):
             position = np.append(position, empty_positions, 0)
             position = position.astype(np.int)
 
-        # Detect if entire image is empty pileup (all positions are -1)
-        # When pileup is completely empty, model produces spurious T×RLE=10 predictions
-        is_empty_pileup = np.all(position[:, 0] == -1)
+        # Detect if image is empty or has very few valid pileup rows
+        # When pileup is empty/low-coverage, model produces spurious T×RLE=10 predictions
+        # Use image pixel data (not position) to detect empty pileup: position can be
+        # valid while pixel data is all zeros (e.g. contig with reads that have low MAPQ)
+        MIN_EFFECTIVE_ROWS = 50
+        effective_rows = np.sum(np.any(image != 0, axis=1))
+        is_empty_pileup = effective_rows < MIN_EFFECTIVE_ROWS
 
         # at this point the image size should be SEQ_LENGTH, if not then raise a ValueError.
         if image.shape[0] < ImageSizeOptions.SEQ_LENGTH or position.shape[0] < ImageSizeOptions.SEQ_LENGTH:
