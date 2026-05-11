@@ -44,13 +44,13 @@ def perform_stitch(input_directory, output_path, output_prefix, threads, assembl
     :param output_path: Path to the output_consensus_sequence
     :param output_prefix: Output file's prefix
     :param threads: Number of threads to use
-    :param assembly_fasta: Optional path to assembly FASTA for empty pileup fallback
+    :param assembly_fasta: Optional path to assembly FASTA for fallback when model prediction fails
     :return:
     """
     # get all the files
     all_prediction_files = get_file_paths_from_directory(input_directory)
 
-    # Load assembly sequences if provided (for empty pileup fallback)
+    # Load assembly sequences if provided (for fallback when model prediction is unreliable)
     assembly_dict = None
     if assembly_fasta is not None:
         sys.stderr.write(TextColor.GREEN + "INFO: Loading assembly FASTA: " + assembly_fasta + "\n" + TextColor.END)

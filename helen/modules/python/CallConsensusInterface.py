@@ -45,7 +45,7 @@ def get_file_paths_from_directory(directory_path):
 
 
 def call_consensus(image_dir, model_path, batch_size, num_workers, threads, output_dir, output_prefix, gpu_mode,
-                   device_ids, callers):
+                   device_ids, callers, assembly_fasta=None):
     """
     This method provides an interface too call the predict method that generates the prediction hdf5 file
     :param image_dir: Path to directory where all MarginPolish images are saved
@@ -146,11 +146,11 @@ def call_consensus(image_dir, model_path, batch_size, num_workers, threads, outp
 
     if gpu_mode:
         # Distributed GPU setup
-        predict_gpu(file_chunks, output_filename, model_path, batch_size, callers, device_ids, num_workers)
+        predict_gpu(file_chunks, output_filename, model_path, batch_size, callers, device_ids, num_workers, assembly_fasta)
     else:
         # distributed CPU setup, call the prediction function
         predict_cpu(file_chunks, output_filename, model_path, batch_size,
-                    callers, threads_per_caller, num_workers)
+                    callers, threads_per_caller, num_workers, assembly_fasta)
 
     # notify the user that process has completed successfully
     sys.stderr.write(TextColor.GREEN + "INFO: " + TextColor.END + "PREDICTION GENERATED SUCCESSFULLY.\n")

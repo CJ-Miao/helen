@@ -84,7 +84,8 @@ def polish_genome(image_dir, model_path, batch_size, num_workers, threads, outpu
                    output_prefix,
                    gpu_mode,
                    device_ids,
-                   callers)
+                   callers,
+                   assembly_fasta)
     call_consensus_end_time = time.time()
 
     stitch_start_time = time.time()

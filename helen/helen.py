@@ -234,7 +234,7 @@ def add_stitch_arguments(parser):
         type=str,
         required=False,
         default=None,
-        help="Path to assembly FASTA (optional). Used as fallback for regions with empty pileup."
+        help="Path to assembly FASTA (optional). Used as fallback when model prediction is unreliable."
     )
 
 
