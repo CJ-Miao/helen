@@ -79,8 +79,10 @@ def predict(test_file, output_filename, model_path, batch_size, num_workers, ran
                              shuffle=False,
                              num_workers=num_workers)
 
-    # load assembly FASTA for empty pileup fallback
+    # load assembly FASTA for empty/weak pileup fallback
     assembly_dict = None
+    assembly_base_labels = None
+    assembly_rle = None
     if assembly_fasta is not None:
         import gzip
         assembly_dict = {}
@@ -100,6 +102,30 @@ def predict(test_file, output_filename, model_path, batch_size, num_workers, ran
             if current_contig:
                 assembly_dict[current_contig] = ''.join(current_seq)
 
+        # Precompute base labels and RLE from assembly for fast lookup
+        # assembly_base_labels[contig][p] = base label at position p
+        # assembly_rle[contig][p] = run-length of consecutive same-base at position p
+        assembly_base_labels = {}
+        assembly_rle = {}
+        base_map = {'A': 1, 'C': 2, 'G': 3, 'T': 4}
+        MAX_RLE_LABEL = ImageSizeOptions.TOTAL_RLE_LABELS - 1
+        for contig_name, seq in assembly_dict.items():
+            n = len(seq)
+            bl = np.zeros(n, dtype=np.uint8)
+            rl = np.ones(n, dtype=np.uint8)
+            i = 0
+            while i < n:
+                j = i
+                while j < n and seq[j] == seq[i]:
+                    j += 1
+                run_len = min(j - i, MAX_RLE_LABEL)
+                base_label = base_map.get(seq[i], 0)
+                bl[i:j] = base_label
+                rl[i:j] = run_len
+                i = j
+            assembly_base_labels[contig_name] = bl
+            assembly_rle[contig_name] = rl
+
     # iterate over the data in minibatches
     # Track which contigs have at least one normal (non-empty) prediction
     contigs_with_predictions = set()
@@ -118,22 +144,23 @@ def predict(test_file, output_filename, model_path, batch_size, num_workers, ran
             # Check if this batch is entirely empty pileup - skip model inference
             batch_empty = all(x.item() if isinstance(x, torch.Tensor) else bool(x) for x in is_empty_pileup)
             if batch_empty:
-                # Write assembly sequences for empty pileup images instead of skipping
-                if assembly_dict is not None:
+                # Write assembly sequences for empty pileup images
+                if assembly_base_labels is not None:
                     for i in range(len(contig)):
                         contig_name = contig[i] if isinstance(contig[i], str) else contig[i].decode('utf-8')
                         all_contigs_seen.add(contig_name)
-                        assembly_seq = assembly_dict.get(contig_name)
-                        if assembly_seq is None:
+                        if contig_name not in assembly_base_labels:
                             continue
+                        asm_bl = assembly_base_labels[contig_name]
+                        asm_rl = assembly_rle[contig_name]
                         pos_i = position[i].cpu().numpy() if isinstance(position[i], torch.Tensor) else position[i]
                         base_labels = np.zeros(len(pos_i), dtype=np.uint8)
                         rle_labels = np.ones(len(pos_i), dtype=np.uint8)
                         for j in range(len(pos_i)):
                             p = pos_i[j][0]
-                            if 0 <= p < len(assembly_seq):
-                                b = assembly_seq[p]
-                                base_labels[j] = {'A': 1, 'C': 2, 'G': 3, 'T': 4}.get(b, 0)
+                            if 0 <= p < len(asm_bl):
+                                base_labels[j] = asm_bl[p]
+                                rle_labels[j] = asm_rl[p]
                         prediction_data_file.write_prediction(
                             contig[i], contig_start[i], contig_end[i], chunk_id[i],
                             pos_i, base_labels, rle_labels, filename[i])
@@ -199,6 +226,28 @@ def predict(test_file, output_filename, model_path, batch_size, num_workers, ran
             predicted_base_labels = base_labels.cpu().numpy()
             predicted_rle_labels = rle_labels.cpu().numpy()
 
+            # Unified per-position replacement:
+            # For each position, check the corresponding pileup row density.
+            # If below threshold: replace with assembly base + assembly RLE at that position.
+            # This handles both weak-pileup samples and individual empty rows uniformly.
+            DENSITY_THRESHOLD = 0.008
+            if assembly_dict is not None:
+                for i in range(images.size(0)):
+                    contig_name_i = contig[i] if isinstance(contig[i], str) else contig[i].decode('utf-8')
+                    if contig_name_i not in assembly_base_labels:
+                        continue
+                    asm_bl = assembly_base_labels[contig_name_i]
+                    asm_rl = assembly_rle[contig_name_i]
+                    pos_i = position[i].cpu().numpy() if isinstance(position[i], torch.Tensor) else np.array(position[i])
+                    for j in range(predicted_base_labels.shape[1]):
+                        pileup_row = images[i, j].cpu().numpy() if isinstance(images[i, j], torch.Tensor) else images[i, j]
+                        density = np.sum(pileup_row != 0) / pileup_row.size
+                        if density < DENSITY_THRESHOLD:
+                            p = pos_i[j][0]
+                            if 0 <= p < len(asm_bl):
+                                predicted_base_labels[i, j] = asm_bl[p]
+                                predicted_rle_labels[i, j] = asm_rl[p]
+
             batch_iterator += 1
 
             if rank == 0:
@@ -216,22 +265,23 @@ def predict(test_file, output_filename, model_path, batch_size, num_workers, ran
             # go to each of the images and save the predictions to the file
             for i in range(images.size(0)):
                 if is_empty_pileup[i].item() if isinstance(is_empty_pileup[i], torch.Tensor) else is_empty_pileup[i]:
-                    # Write assembly sequence for empty pileup instead of skipping
-                    if assembly_dict is None:
+                    # Write assembly sequence for empty pileup
+                    if assembly_base_labels is None:
                         continue
                     contig_name = contig[i] if isinstance(contig[i], str) else contig[i].decode('utf-8')
                     all_contigs_seen.add(contig_name)
-                    assembly_seq = assembly_dict.get(contig_name)
-                    if assembly_seq is None:
+                    if contig_name not in assembly_base_labels:
                         continue
+                    asm_bl = assembly_base_labels[contig_name]
+                    asm_rl = assembly_rle[contig_name]
                     pos_i = position[i].cpu().numpy() if isinstance(position[i], torch.Tensor) else position[i]
                     base_labels = np.zeros(len(pos_i), dtype=np.uint8)
                     rle_labels = np.ones(len(pos_i), dtype=np.uint8)
                     for j in range(len(pos_i)):
                         p = pos_i[j][0]
-                        if 0 <= p < len(assembly_seq):
-                            b = assembly_seq[p]
-                            base_labels[j] = {'A': 1, 'C': 2, 'G': 3, 'T': 4}.get(b, 0)
+                        if 0 <= p < len(asm_bl):
+                            base_labels[j] = asm_bl[p]
+                            rle_labels[j] = asm_rl[p]
                     prediction_data_file.write_prediction(
                         contig[i], contig_start[i], contig_end[i], chunk_id[i],
                         pos_i, base_labels, rle_labels, filename[i])
