@@ -162,3 +162,79 @@ if all_empty_contigs:
             prediction_data_file.meta['predictions'] -= {...}
             prediction_data_file.meta['predictions_contig'] -= {...}
 ```
+
+---
+
+## 2026-05-11 追加：弱pileup检测 + 滑动窗口assembly回退
+
+### 问题
+
+tmp2结果中仍有8个T-run（6个为模型假阳性），虽然contig整体T%不高（25-50%），但局部区域有超长T-run（20-750bp）：
+
+| Contig | T-run长度 | 全局T% | 模型预测可靠性 |
+|--------|----------|--------|--------------|
+| contig_103 | 750bp | 25-40% | 假阳性 |
+| contig_30 | 700bp | 25-34% | 假阳性 |
+| contig_31 | 600bp | 53% | 假阳性 |
+| contig_131 | 425bp | 25-37% | 假阳性 |
+| contig_49 | 351bp | 51% | 假阳性 |
+| contig_62 | 304bp | 35% | 假阳性 |
+
+**根本原因**：这些contig的pileup存在（有效行数>=50，不被标记为空），但信号非常稀疏：
+- contig_103: 一个chunk只有113/1000有效行，密度0.001
+- contig_49: 每行只有1个非零像素，密度~0.011
+- 正常pileup密度: ~0.022-0.029
+
+模型对弱pileup（非全零但信号不足）产生全T预测，因为：
+1. 模型在正常pileup上训练，没见过弱pileup
+2. 弱pileup是OOD输入，模型权重碰巧输出T高概率
+3. 不是代码写了"默认写T"，是模型自身行为
+
+### 修改方案
+
+在预测阶段增加**整图密度检测**：非零密度 < 0.5% 的样本标记为weak，滑动窗口中该样本的模型输出被assembly序列替换。
+
+### 核心逻辑
+
+```python
+WINDOW_QUALITY_THRESHOLD = 0.005  # 非零密度阈值
+
+# 1. 每batch检测每个sample的密度
+images_np = images.cpu().numpy()
+sample_is_weak = torch.zeros(batch_size, dtype=torch.bool)
+for si in range(batch_size):
+    w_density = np.sum(images_np[si] != 0) / images_np[si].size
+    if w_density < WINDOW_QUALITY_THRESHOLD:
+        sample_is_weak[si] = True
+
+# 2. 预计算weak sample的assembly碱基labels
+assembly_base_labels_for_weak = ...  # shape: (batch, seq_len)
+
+# 3. 滑动窗口中，模型推理后，替换weak sample的输出
+for window in sliding_windows:
+    output_base, output_rle, hidden = model(image_chunk, hidden)
+    if sample_is_weak[si]:
+        # 用assembly碱基的one-hot替换模型输出
+        output_base[si, :, :] = assembly_one_hot
+        output_rle[si, :] = 1.0
+
+# 4. 经过softmax + 滑动窗口聚合，assembly碱基最终胜出
+```
+
+### 修改的文件
+
+| 文件 | 修改内容 |
+|------|---------|
+| `predict_cpu.py` | 整图密度检测 + pre-compute assembly + 滑动窗口替换 |
+| `predict_gpu.py` | 与CPU版本相同 |
+
+### 密度阈值说明
+
+- 正常pileup: 密度 ~2.2-2.9%
+- 弱pileup (contig_49): 密度 ~1.1%
+- 极弱pileup (contig_103): 密度 ~0.1%
+- 阈值 0.5%: 区分正常和弱pileup的中间值
+
+### 预期效果
+
+弱pileup样本不再产生T×RLE=10假阳性，consensus中contig局部T-run应消失。
